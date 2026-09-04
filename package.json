@@ -1,0 +1,33 @@
+{
+  "name": "linaria-styled-specificity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Deterministic selector specificity for styled(PlainReactComponent) in Linaria / wyw-in-js: a styled processor that derives the wrapped component's className-forwarding depth statically at build time.",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "demo": "node demo/run.mjs",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@linaria/core": "8.2.0",
+    "@linaria/react": "8.2.0",
+    "@wyw-in-js/processor-utils": "2.5.0",
+    "@wyw-in-js/shared": "2.5.0",
+    "@wyw-in-js/transform": "2.5.0",
+    "oxc-parser": "0.137.0",
+    "resolve": "1.22.12"
+  },
+  "devDependencies": {
+    "@swc/core": "1.15.46",
+    "@swc/jest": "0.2.39",
+    "@types/jest": "29.5.14",
+    "@types/react": "19.2.14",
+    "jest": "30.3.0",
+    "react": "19.2.8"
+  }
+}

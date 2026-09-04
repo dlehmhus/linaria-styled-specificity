@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "linaria-styled-specificity/styled",
+  "implementation": "./styled-processor.cjs",
+  "tags": ["styled"],
+  "semantics": {
+    "kind": "styled-target",
+    "targets": ["class-name", "selector-chain"]
+  }
+}

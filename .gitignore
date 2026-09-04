@@ -1,0 +1,3 @@
+node_modules/
+__analyzer-test-tmp__/
+.DS_Store
