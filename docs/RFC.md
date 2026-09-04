@@ -1,7 +1,7 @@
-<!-- Draft of the wyw-in-js enhancement request (template:
-     .github/ISSUE_TEMPLATE/enhancement_request.md). Title suggestion:
-     RFC: deterministic specificity for styled(PlainReactComponent)
-     Canonical copy: https://github.com/dlehmhus/linaria-styled-specificity/blob/main/docs/RFC.md -->
+<!-- wyw-in-js enhancement request (template:
+     .github/ISSUE_TEMPLATE/enhancement_request.md). Posted as
+     https://github.com/wyw-in-js/wyw-in-js/issues/425 with the title
+     RFC: deterministic specificity for styled(PlainReactComponent) -->
 
 ## Describe the enhancement
 

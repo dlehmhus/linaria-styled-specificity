@@ -10,7 +10,8 @@ class once per Linaria layer it lands on. The override then wins regardless of
 CSS chunk order. Forwarding the tracer cannot prove is a build error, never a
 silently weak selector.
 
-This repository accompanies an RFC to wyw-in-js ([docs/RFC.md](docs/RFC.md)).
+This repository accompanies an RFC to wyw-in-js ([docs/RFC.md](docs/RFC.md),
+posted as [wyw-in-js#425](https://github.com/wyw-in-js/wyw-in-js/issues/425)).
 The processor runs in production in a large Next.js codebase (about 450
 `styled(X)` sites, zero unprovable cases).
 
