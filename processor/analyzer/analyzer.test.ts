@@ -162,6 +162,96 @@ describe('class-name-tracer', () => {
     expect(trace(consumer, 'Outer')).toEqual([['Leaf:styled']]);
   });
 
+  it('traces the component a local factory returns', () => {
+    write(
+      'factory-target.tsx',
+      `import { styled } from '@linaria/react';
+       const Leaf = styled.span\`\`;
+       export const Real = ({ className }: { className?: string }) => (
+         <Leaf className={className} />
+       );`,
+    );
+    const file = write(
+      'factory.tsx',
+      `import { Real } from './factory-target';
+       import { Real as Icon } from './factory-target';
+       type P = { className?: string };
+       const defer = (Inner: React.ComponentType<P>, name: string) => {
+         const Deferred = (props: P) => {
+           if (name === 'now') return <Inner {...props} />;
+           return <span {...props} />;
+         };
+         Deferred.displayName = \`Deferred\${name}\`;
+         return Deferred;
+       };
+       const wrap = (Inner: React.ComponentType<P>) => (props: P) => (
+         <Inner {...props} />
+       );
+       const wrapIcon = (Icon: React.ComponentType<P>) => (props: P) => (
+         <Icon {...props} />
+       );
+       export const DeferredReal = defer(Real, 'Real');
+       export const WrappedReal = wrap(Real);
+       export const ShadowNamed = wrapIcon(Icon);`,
+    );
+    expect(trace(file, 'DeferredReal')).toEqual([['Leaf:styled'], []]);
+    expect(trace(file, 'WrappedReal')).toEqual([['Leaf:styled']]);
+    // the argument repeats the parameter name: it is resolved at module level,
+    // where only the import binding exists, so the alias cannot loop
+    expect(trace(file, 'ShadowNamed')).toEqual([['Leaf:styled']]);
+  });
+
+  it('resolves factory arguments at module level, not inside the component', () => {
+    const file = write(
+      'factory-shadow.tsx',
+      `import { Real } from './factory-target';
+       type P = { className?: string };
+       const wrap = (Inner: React.ComponentType<P>) => (props: P) => {
+         const Real = 'div';
+         return <Inner {...props} />;
+       };
+       export const Wrapped = wrap(Real);`,
+    );
+    expect(trace(file, 'Wrapped')).toEqual([['Leaf:styled']]);
+  });
+
+  it('fails loudly when a factory param cannot be bound to an argument', () => {
+    const file = write(
+      'factory-unbound.tsx',
+      `import { Real } from './factory-target';
+       type P = { className?: string };
+       const wrap = (Inner?: React.ComponentType<P>) => (props: P) => (
+         <Inner {...props} />
+       );
+       const wrapDestructured = ({ Inner }: { Inner: React.ComponentType<P> }) =>
+         (props: P) => <Inner {...props} />;
+       export const Missing = wrap();
+       export const Destructured = wrapDestructured({ Inner: Real });`,
+    );
+    for (const name of ['Missing', 'Destructured']) {
+      const result = tracer.traceStyleTargets(file, name);
+      expect(result.status).toBe('unsupported');
+      expect(result.failures?.join(' ')).toContain(
+        "unknown element identifier 'Inner'",
+      );
+    }
+  });
+
+  it('rejects a factory whose returned component is not statically single', () => {
+    const file = write(
+      'factory-branchy.tsx',
+      `type P = { className?: string };
+       const pick = (flag: boolean) => {
+         if (flag) return (props: P) => <span {...props} />;
+         return (props: P) => <div {...props} />;
+       };
+       export const Picked = pick(true);`,
+    );
+    const result = tracer.traceStyleTargets(file, 'Picked');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain('not a traceable function');
+  });
+
   it('traces className behind ?? and || fallbacks in the attribute', () => {
     const file = write(
       'logical-fallback.tsx',

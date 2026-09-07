@@ -115,6 +115,14 @@ The tracer follows `className` through:
 - element aliases: `const Root = floating ? A : B`, `const El = as || 'div'`
 - imports, re-exports, `export *`, `export default`, `memo()`,
   `forwardRef()`, `m.create()`
+- component factories: `const Deferred = deferUntilNear(Icon, 'Icon')`, where
+  the factory is a function in the same module that returns exactly one
+  component function (directly, or as a local it names and returns). The
+  factory's parameters resolve to that call site's arguments, so the element
+  the instance renders (`<Icon />`) is traced like a plain reference. Arguments
+  are resolved at module level, so nothing inside the component shadows them.
+  Branchy factories, destructured or unbound parameters, and locals of the
+  factory body itself (outside the returned component) stay unprovable.
 
 ## The `as` prop on wrapped plain components
 

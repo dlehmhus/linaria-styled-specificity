@@ -124,9 +124,61 @@ const withAliasName = (binding, name) => {
 };
 
 /**
+ * The component function a factory returns, or null when there is not exactly
+ * one statically visible one: `(Icon) => (props) => <Icon {...props} />`, or
+ * the `const C = (props) => ...; C.displayName = ...; return C;` shape HOFs use
+ * to name what they produce.
+ */
+const returnedFunctionOf = (factory) => {
+  const returns = returnExpressions(factory);
+  if (returns.length !== 1) return null;
+  const returned = unwrapTS(returns[0]);
+  if (!returned) return null;
+  if (isFunctionNode(returned)) return returned;
+  if (returned.type !== 'Identifier') return null;
+  const declared = [];
+  walk(factory.body, (node) => {
+    // declarators inside nested functions belong to those, not to the factory
+    if (isFunctionNode(node)) return false;
+    if (
+      node.type === 'VariableDeclarator' &&
+      node.id?.type === 'Identifier' &&
+      node.id.name === returned.name
+    ) {
+      declared.push(unwrapTS(node.init));
+    }
+    return undefined;
+  });
+  return declared.length === 1 && isFunctionNode(declared[0])
+    ? declared[0]
+    : null;
+};
+
+/**
+ * Maps a factory's parameter names to the argument expressions of one call
+ * site, so free identifiers of the returned function (`Icon`) resolve to what
+ * this instance was built with. Same file by construction: the factory binding
+ * is looked up in the program the call sits in. Params the call cannot bind
+ * provably (destructured, spread argument, missing) are left out and fail
+ * loudly where they are read.
+ */
+const closureBindings = (factory, args) => {
+  const bindings = new Map();
+  (factory.params ?? []).forEach((param, index) => {
+    const p = param?.type === 'AssignmentPattern' ? param.left : param;
+    if (p?.type !== 'Identifier') return;
+    const arg = unwrapTS(args?.[index]);
+    if (!arg || arg.type === 'SpreadElement') return;
+    bindings.set(p.name, arg);
+  });
+  return bindings;
+};
+
+/**
  * Finds what `name` is bound to at module level of `program`.
  * Returns a descriptor:
- *  - { kind: 'function', node }
+ *  - { kind: 'function', node } (plus `closure` when the function is what a
+ *    local factory call returns: Map(param name -> argument expression))
  *  - { kind: 'styled', node } / { kind: 'css', node }   (Linaria-tagged declarations)
  *  - { kind: 'import', source, imported }   (imported binding)
  *  - { kind: 'reexport', source, imported } (export { x } from '...')
@@ -134,7 +186,7 @@ const withAliasName = (binding, name) => {
  *  - { kind: 'expression', node }           (anything else)
  *  - null (not found)
  */
-const findModuleBinding = (program, name) => {
+const findModuleBinding = (program, name, factoriesSeen = new Set()) => {
   const starSources = [];
   for (const rawStatement of program.body) {
     if (rawStatement.type === 'ExportAllDeclaration' && rawStatement.source) {
@@ -232,6 +284,30 @@ const findModuleBinding = (program, name) => {
             const arg = unwrapTS(init.arguments?.[0]);
             if (isFunctionNode(arg)) return { kind: 'function', node: arg };
             if (arg?.type === 'Identifier') return withAliasName(findModuleBinding(program, arg.name), arg.name);
+          }
+          // factory(Inner, ...): a local function that returns a component
+          // function. The returned function is the component; the factory's
+          // params ride along bound to this call's arguments.
+          if (
+            callee?.type === 'Identifier' &&
+            callee.name !== name &&
+            !factoriesSeen.has(callee.name)
+          ) {
+            const factory = findModuleBinding(
+              program,
+              callee.name,
+              new Set(factoriesSeen).add(name),
+            );
+            if (factory?.kind === 'function') {
+              const produced = returnedFunctionOf(factory.node);
+              if (produced) {
+                return {
+                  kind: 'function',
+                  node: produced,
+                  closure: closureBindings(factory.node, init.arguments),
+                };
+              }
+            }
           }
           return { kind: 'expression', node: init };
         }
@@ -399,7 +475,20 @@ const patternIdentifiers = (pattern, out = []) => {
  *   { kind: 'value', refs }                a provable class value (helper args)
  *   { kind: 'unknown' }                    anything else
  */
-const buildScope = (fn, inputs, siteProps, parent = null) => {
+// What a module-level expression sees: nothing local, every identifier is a
+// module binding. Factory arguments are resolved against this.
+const MODULE_SCOPE = Object.freeze({
+  tracked: new Set(),
+  carriers: new Set(),
+  propNames: new Set(),
+  values: new Map(),
+  locals: new Map(),
+  hookResults: new Set(),
+  aliases: new Map(),
+  siteProps: null,
+});
+
+const buildScope = (fn, inputs, siteProps, parent = null, closure = null) => {
   // A closure declared inside a component (`const getStyle = () => ...`)
   // sees the component's bindings; its own params shadow them.
   const inheritSet = (key) => new Set(parent?.[key] ?? []);
@@ -415,6 +504,7 @@ const buildScope = (fn, inputs, siteProps, parent = null) => {
     values: inheritMap('values'), // helper params bound to provable class values
     locals: inheritMap('locals'), // local identifier -> [expressions assigned]
     hookResults: inheritSet('hookResults'), // identifiers bound from hook results (runtime)
+    aliases: closure ? new Map(closure) : inheritMap('aliases'), // factory param -> call-site argument expression
     siteProps: siteProps ?? parent?.siteProps ?? null, // Map(prop key -> { tracked, refs }) from the call site
     failures: [],
   };
@@ -425,6 +515,7 @@ const buildScope = (fn, inputs, siteProps, parent = null) => {
     scope.values.delete(name);
     scope.locals.delete(name);
     scope.hookResults.delete(name);
+    scope.aliases.delete(name);
   };
   if (parent) {
     for (const param of fn.params ?? []) {
@@ -590,6 +681,19 @@ const buildScope = (fn, inputs, siteProps, parent = null) => {
         scope.locals.set(name, init ? [init] : []);
       }
     });
+  }
+  // a factory argument is only visible where nothing closer shadows the name
+  for (const name of scope.aliases.keys()) {
+    if (
+      scope.tracked.has(name) ||
+      scope.carriers.has(name) ||
+      scope.propNames.has(name) ||
+      scope.values.has(name) ||
+      scope.locals.has(name) ||
+      scope.hookResults.has(name)
+    ) {
+      scope.aliases.delete(name);
+    }
   }
   return scope;
 };
@@ -900,6 +1004,16 @@ const resolveElementExpr = (expression, ctx, visiting = new Set()) => {
       const { name } = node;
       if (scope.propNames.has(name) || scope.carriers.has(name)) return [{ type: 'runtime' }];
       if (scope.hookResults.has(name)) return [{ type: 'runtime' }];
+      // factory params bind to call-site arguments, which live at module
+      // level: resolve them there, so neither a component local nor the alias
+      // itself (`factory(Icon)` for a param named `Icon`) shadows the lookup
+      if (scope.aliases.has(name)) {
+        return resolveElementExpr(
+          scope.aliases.get(name),
+          { ...ctx, scope: MODULE_SCOPE },
+          new Set(),
+        );
+      }
       if (scope.locals.has(name)) {
         if (visiting.has(name)) return [];
         const next = new Set(visiting).add(name);
@@ -971,8 +1085,8 @@ const attributeName = (attr) => attr.name?.name ?? attr.name?.name?.name ?? null
  *   { kind: 'dom' | 'runtime', refs }
  *   { kind: 'component', name, refs, siteProps: Map(prop -> { tracked, refs }) }
  */
-const traceFunction = (fn, code, filename, inputs, siteProps) => {
-  const scope = buildScope(fn, inputs, siteProps);
+const traceFunction = (fn, code, filename, inputs, siteProps, closure) => {
+  const scope = buildScope(fn, inputs, siteProps, null, closure);
   const failures = [...scope.failures];
   const targets = [];
   if (!fn.body) return { targets, failures: ['function has no body'] };
@@ -1276,6 +1390,7 @@ const traceStyleTargets = (filename, name, depth = 0, opts = {}) => {
     resolved.filename,
     [{ kind: 'props', tracked: trackedProps }],
     opts.siteProps ?? null,
+    binding.closure ?? null,
   );
   if (failures.length > 0) {
     return {

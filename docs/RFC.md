@@ -86,6 +86,7 @@ What the tracer follows, driven by the real corpus (full list and fixtures in th
 - rest props and carrier objects, locals, helper functions (module-level and closures), module-level variant maps
 - forwarding through another prop into a child, element aliases (`const Root = block ? A : B`)
 - imports, re-exports, `export default`, `memo()`, `forwardRef()`, `m.create()`
+- component factories in the same module (`const Deferred = deferUntilNear(Icon, 'Icon')`): the returned component is traced with the factory's params bound to that call's arguments, resolved at module level
 
 Contract boundary: values only the *consumer* controls add nothing to the chain. In
 

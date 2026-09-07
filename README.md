@@ -103,7 +103,9 @@ in [docs/styled-specificity.md](docs/styled-specificity.md).
    ternaries, `||` / `??` / `&&`, `cx()` / `clsx()` / `classNames()`, rest
    props and carrier objects, locals, helper functions, module-level variant
    maps, forwarding through other props into children, element aliases,
-   imports / re-exports / `memo()` / `forwardRef()`.
+   imports / re-exports / `memo()` / `forwardRef()`, component factories
+   (`const C = hoc(Inner)` with the factory's params bound to the call's
+   arguments).
 2. `processor/analyzer/static-class-names.cjs` resolves each target's Linaria
    chain (`styled(X)` extends, `css` classes) without evaluating anything.
 3. `processor/styled-processor.cjs` (a subclass of `@linaria/react`'s
