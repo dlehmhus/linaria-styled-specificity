@@ -41,8 +41,11 @@ const DOCS = './docs/styled-specificity.md';
 const EMIT_SHAPES = new Set(['repeated', 'list']);
 
 // Runtime wrapper around a plain component target, see tagExpressionArgument.
+// A frozen / sealed target cannot take the marker; without it Linaria would
+// replace the component on `as` instead of forwarding, so that is an error
+// with a reason rather than a bare TypeError or a silent fallback.
 const AS_FORWARDING_MARKER =
-  '((c) => (c && typeof c !== "string" && !c.__wyw_meta && (c.__wyw_meta = { className: "", extends: null }), c))';
+  '((c) => { if (c && typeof c !== "string" && !c.__wyw_meta) { if (!Object.isExtensible(c)) throw new Error("styled(): cannot mark a non-extensible component for as-prop forwarding: " + (c.displayName || c.name || "component")); c.__wyw_meta = { className: "", extends: null }; } return c; })';
 
 // Mirrors the module-private helper in @linaria/react/dist/processors/styled.js.
 const isReactLazyValue = (value) =>

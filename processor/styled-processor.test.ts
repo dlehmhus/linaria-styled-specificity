@@ -352,6 +352,21 @@ describe('StaticDepthStyledProcessor#tagExpressionArgument', () => {
     expect(callee.type).toBe('Identifier');
     expect(callee.name).toContain('__wyw_meta');
     expect(callee.name).toMatch(/^\(\(c\) =>/);
+    // the marker source is executable; a frozen target cannot be marked and
+    // fails with a reason instead of a bare TypeError
+    const mark = new Function(`return ${callee.name}`)() as (
+      c: unknown,
+    ) => unknown;
+    const plain = (): null => null;
+    expect(mark(plain)).toBe(plain);
+    expect(plain).toHaveProperty('__wyw_meta', {
+      className: '',
+      extends: null,
+    });
+    const frozen = Object.freeze((): null => null);
+    expect(() => mark(frozen)).toThrow('non-extensible component');
+    expect(frozen).not.toHaveProperty('__wyw_meta');
+    expect(mark('div')).toBe('div');
     expect(node.arguments).toEqual([
       {
         type: 'CallExpression',

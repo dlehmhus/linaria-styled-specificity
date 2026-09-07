@@ -41,27 +41,6 @@ const rootIdentifierName = (node) => {
   return null;
 };
 
-/** Local names bound to processor tags in this file (handles aliasing). */
-const collectProcessorLocals = (program) => {
-  const locals = new Map(); // localName -> 'styled' | 'css'
-  for (const statement of program.body) {
-    if (statement.type !== 'ImportDeclaration') continue;
-    const source = statement.source?.value;
-    for (const spec of statement.specifiers ?? []) {
-      if (spec.type !== 'ImportSpecifier') continue;
-      const imported = spec.imported?.name ?? spec.imported?.value;
-      const local = spec.local?.name;
-      if (!local) continue;
-      if (source === '@linaria/react' && imported === 'styled') {
-        locals.set(local, 'styled');
-      } else if (source === '@linaria/core' && imported === 'css') {
-        locals.set(local, 'css');
-      }
-    }
-  }
-  return locals;
-};
-
 // mirrors transform's getDisplayName (VariableDeclarator / Property /
 // JSXOpeningElement owner; falls back to filename-derived + idx)
 const displayNameFor = (ancestors, idx, filename) => {
@@ -141,7 +120,7 @@ const staticFileInfo = (filename, options, root) => {
   const cached = slot.byOptionsKey.get(optionsKey);
   if (cached) return cached;
 
-  const locals = collectProcessorLocals(program);
+  const locals = tracer.collectProcessorLocals(program);
   const usages = [];
   if (locals.size > 0) {
     // replicate collectProcessorUsages: tagged templates + calls (that are

@@ -104,17 +104,30 @@ The tracer follows `className` through:
 
 - direct forwarding: `<Base className={className} />`
 - conditionals and fallbacks: ternaries, `a || b`, `a ?? b`, `cond && cls`
-- `cx()` / `clsx()` / `classNames()` mixes, including arrays and objects
-- rest props and carrier objects: `{...props}`, `const merged = { ...props }`
+- `cx()` / `clsx()` / `classNames()` mixes, including arrays and objects.
+  Joiners are recognised by their import only (`cx` from `@linaria/core`,
+  anything from `clsx` / `classnames`, aliases included); a function of that
+  name from any other module, file or component local is followed as a helper
+- rest props and carrier objects: `{...props}`, `const merged = { ...props }`.
+  Spreads and attributes are last-write-wins: `{ ...props, className: 'x' }`
+  and `<Base {...props} className="x" />` do not forward `props.className`,
+  the reversed orders do
 - locals: `const classes = cx(className, x)`, `let style; if (...) style = a;`
+  (`classes += '-x'` and `classes++` are `+` expressions and fail like one)
+- destructuring defaults of class props (`extra = 'foo'`) count as what the
+  element carries when the consumer passes nothing
 - helpers, module-level or closures inside the component:
   `className={getButtonClasses(props)}`, `cx(className, getSizeStyle())`
-- variant maps: `variants[variant]` on a module-level object literal
+- variant maps: `variants[variant]` on a module-level object literal, also
+  for elements (`const El = elements[kind]`). A spread that could still decide
+  the selected key (`{ a: A, ...more }`, any spread under a computed access) is
+  unprovable
 - forwarding through another prop into a child:
   `<Child rootClassName={className} />`
 - element aliases: `const Root = floating ? A : B`, `const El = as || 'div'`
 - imports, re-exports, `export *`, `export default`, `memo()`,
-  `forwardRef()`, `m.create()`
+  `forwardRef()`, `m.create()`, aliased tag imports (`styled as s`,
+  `css as linariaCss`)
 - component factories: `const Deferred = deferUntilNear(Icon, 'Icon')`, where
   the factory is a function in the same module that returns exactly one
   component function (directly, or as a local it names and returns). The
@@ -132,7 +145,9 @@ carries `__wyw_meta`. Plain components in this repo own an `as` prop
 (`Container`, `Title`), so `<StyledContainer as="div">` must reach
 `Container`, not replace it. The processor therefore marks plain targets in
 the runtime tag expression:
-`styled(((c) => (c && typeof c !== "string" && !c.__wyw_meta && (c.__wyw_meta = {...}), c))(Container))`.
+`styled(((c) => { if (c && typeof c !== "string" && !c.__wyw_meta) { ...; c.__wyw_meta = {...}; } return c; })(Container))`.
+A frozen component cannot take the marker; the wrapper throws with a reason
+instead of leaving `as` broken.
 Without the marker the wrapper renders a bare element, all props leak to the
 DOM ("React does not recognize the `isInnerContainer` prop") and the
 component's own classes are missing. (The old runtime `makeItStylish` set the
@@ -210,8 +225,15 @@ locally and visibly, which is a different problem from cross-chunk ordering.
 
 Anything the tracer cannot prove fails the build with the reason, for
 example `className used in '+' expression` or `class value produced by hook
-'useTheme'`. Wrong-but-silent selectors are never emitted. Restructure the
-forwarding into one of the supported patterns above.
+'useTheme'`. A call the tracer does not follow that receives the class value
+is a leak unless its result reaches a class position: a bare statement, a
+condition (`if (consume(className))`) or a local that is only tested
+(`const flag = consume(className); if (flag)`) all fail. The scope model is
+flat across nested callbacks, so a callback that redeclares a name bound
+outside it (`className`, the props object, a local of the component, a module
+binding such as a component or `cx`) fails as well.
+Wrong-but-silent selectors are never emitted. Restructure the forwarding into
+one of the supported patterns above.
 
 ## Validation
 

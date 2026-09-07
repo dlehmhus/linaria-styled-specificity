@@ -501,6 +501,361 @@ describe('class-name-tracer', () => {
     expect(result.failures?.join(' ')).toContain('hook result');
   });
 
+  it('applies last-write-wins to object literal spreads', () => {
+    const file = write(
+      'spread-order.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       export const Before = (props: { className?: string }) => {
+         const merged = { className: 'static', ...props };
+         return <Base {...merged} />;
+       };
+       export const After = (props: { className?: string }) => {
+         const merged = { ...props, className: 'static' };
+         return <Base {...merged} />;
+       };`,
+    );
+    expect(trace(file, 'Before')).toEqual([['Base:styled']]);
+    expect(trace(file, 'After')).toEqual([[]]);
+  });
+
+  it('applies last-write-wins to JSX spreads and attributes', () => {
+    const file = write(
+      'jsx-order.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       export const Before = (props: { className?: string }) => (
+         <Base className="static" {...props} />
+       );
+       export const After = (props: { className?: string }) => (
+         <Base {...props} className="static" />
+       );`,
+    );
+    // the literal is overridden by props.className: no sibling
+    expect(trace(file, 'Before')).toEqual([['Base:styled']]);
+    expect(trace(file, 'After')).toEqual([[]]);
+  });
+
+  it('rejects compound assignments onto a class local', () => {
+    const file = write(
+      'compound.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       export const Suffixed = ({ className }: { className?: string }) => {
+         let classes = className;
+         classes += '-x';
+         return <Base className={classes} />;
+       };`,
+    );
+    const result = tracer.traceStyleTargets(file, 'Suffixed');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain("'+' expression");
+  });
+
+  it('treats a shadowed cx as a helper and follows joiner aliases', () => {
+    const shadowed = write(
+      'cx-shadow.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       const cx = (...args: unknown[]) => 'other';
+       export const Shadowed = ({ className }: { className?: string }) => (
+         <Base className={cx(className)} />
+       );`,
+    );
+    const result = tracer.traceStyleTargets(shadowed, 'Shadowed');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain("helper 'cx'");
+
+    const aliased = write(
+      'cx-alias.tsx',
+      `import { css, cx as join } from '@linaria/core';
+       import cn from 'clsx';
+       const a = css\`\`;
+       const b = css\`\`;
+       export const Aliased = ({ className }: { className?: string }) => (
+         <div className={join(a, cn(b, className))} />
+       );`,
+    );
+    expect(trace(aliased, 'Aliased')).toEqual([['a:css-ref'], ['b:css-ref']]);
+  });
+
+  it('counts destructuring defaults of class props at the top level', () => {
+    const file = write(
+      'prop-default.tsx',
+      `import { cx } from '@linaria/core';
+       export const Defaulted = ({
+         className,
+         extra = 'foo',
+       }: { className?: string; extra?: string }) => (
+         <div className={cx(className, extra)} />
+       );`,
+    );
+    expect(trace(file, 'Defaulted')).toEqual([['foo:css-literal']]);
+  });
+
+  it('rejects element maps that a spread may override', () => {
+    const file = write(
+      'map-spread.tsx',
+      `import { styled } from '@linaria/react';
+       const A = styled.a\`\`;
+       const B = styled.b\`\`;
+       const base = { b: B };
+       const map = { ...base, a: A };
+       const overridden = { a: A, ...base };
+       export const Dynamic = ({ className, k }: { className?: string; k: 'a' | 'b' }) => {
+         const El = map[k];
+         return <El className={className} />;
+       };
+       export const Static = ({ className }: { className?: string }) => {
+         const El = map.a;
+         return <El className={className} />;
+       };
+       export const Overridden = ({ className }: { className?: string }) => {
+         const El = overridden.a;
+         return <El className={className} />;
+       };`,
+    );
+    const dynamic = tracer.traceStyleTargets(file, 'Dynamic');
+    expect(dynamic.status).toBe('unsupported');
+    expect(dynamic.failures?.join(' ')).toContain("spread inside 'map'");
+    expect(trace(file, 'Static')).toEqual([['A:styled']]);
+    const overridden = tracer.traceStyleTargets(file, 'Overridden');
+    expect(overridden.status).toBe('unsupported');
+    expect(overridden.failures?.join(' ')).toContain('overridden by a spread');
+  });
+
+  it('rejects className passed to a call in a boolean position', () => {
+    const file = write(
+      'boolean-call.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       declare function consume(x?: string): boolean;
+       export const Guarded = ({ className }: { className?: string }) => {
+         if (consume(className)) return null;
+         return <Base className={className} />;
+       };
+       export const Checked = ({ className }: { className?: string }) => {
+         if (!className || className.startsWith('x')) return null;
+         return <Base className={className} />;
+       };`,
+    );
+    const guarded = tracer.traceStyleTargets(file, 'Guarded');
+    expect(guarded.status).toBe('unsupported');
+    expect(guarded.failures?.join(' ')).toContain("function 'consume'");
+    expect(trace(file, 'Checked')).toEqual([['Base:styled']]);
+  });
+
+  it('recognises aliased styled and css imports', () => {
+    const file = write(
+      'tag-alias.tsx',
+      `import { styled as s } from '@linaria/react';
+       import { css as lc, cx } from '@linaria/core';
+       const Base = s.div\`\`;
+       const box = lc\`\`;
+       export const Aliased = ({ className }: { className?: string }) => (
+         <Base className={cx(box, className)} />
+       );`,
+    );
+    expect(trace(file, 'Aliased')).toEqual([['Base:styled'], ['box:css-ref']]);
+    const info = staticNames.staticFileInfo(file, OPTIONS, ROOT);
+    expect(info.byBinding.get('Base')?.kind).toBe('styled');
+    expect(info.byBinding.get('box')?.kind).toBe('css');
+  });
+
+  it('follows a cx imported from elsewhere as a helper', () => {
+    write(
+      'my-cx.ts',
+      `export const cx = (...args: (string | undefined)[]) => args.join('-');`,
+    );
+    const file = write(
+      'cx-foreign.tsx',
+      `import { styled } from '@linaria/react';
+       import { cx } from './my-cx';
+       const Base = styled.div\`\`;
+       export const Foreign = ({ className }: { className?: string }) => (
+         <Base className={cx('a', className)} />
+       );`,
+    );
+    const result = tracer.traceStyleTargets(file, 'Foreign');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain("helper 'cx'");
+  });
+
+  it('rejects update expressions on a class local', () => {
+    const file = write(
+      'update.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       export const Bumped = ({ className }: { className?: string }) => {
+         let classes = className;
+         classes++;
+         return <Base className={classes} />;
+       };`,
+    );
+    const result = tracer.traceStyleTargets(file, 'Bumped');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain("'+' expression");
+  });
+
+  it('rejects nested functions redeclaring a name the model resolves', () => {
+    const file = write(
+      'nested-shadow.tsx',
+      `import { styled } from '@linaria/react';
+       import { cx } from '@linaria/core';
+       const Base = styled.div\`\`;
+       const Other = styled.span\`\`;
+       export const ShadowsComponent = ({ className, items }: { className?: string; items: string[] }) => {
+         const rows = items.map((item) => {
+           const Base = Other;
+           return <Base key={item} />;
+         });
+         return <Base className={className}>{rows}</Base>;
+       };
+       export const ShadowsJoiner = ({ className, items }: { className?: string; items: string[] }) => {
+         const rows = items.map((cx) => <span key={cx} />);
+         return <Base className={cx(className, 'x')}>{rows}</Base>;
+       };
+       export const Fine = ({ className, items }: { className?: string; items: string[] }) => (
+         <Base className={className}>{items.map((item) => <span key={item}>{item}</span>)}</Base>
+       );`,
+    );
+    const component = tracer.traceStyleTargets(file, 'ShadowsComponent');
+    expect(component.status).toBe('unsupported');
+    expect(component.failures?.join(' ')).toContain("'Base' is redeclared");
+    const joiner = tracer.traceStyleTargets(file, 'ShadowsJoiner');
+    expect(joiner.status).toBe('unsupported');
+    expect(joiner.failures?.join(' ')).toContain("'cx' is redeclared");
+    expect(trace(file, 'Fine')).toEqual([['Base:styled']]);
+  });
+
+  it('rejects untraced call results that never reach a class position', () => {
+    const file = write(
+      'call-result.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       declare function consume(x?: string): boolean;
+       declare function pick(x?: string): string;
+       export const Flagged = ({ className }: { className?: string }) => {
+         const flag = consume(className);
+         if (flag) return null;
+         return <Base className={className} />;
+       };
+       export const Destructured = ({ className }: { className?: string }) => {
+         const { ok } = consume(className) as unknown as { ok: boolean };
+         return ok ? <Base className={className} /> : null;
+       };
+       const toClass = (value?: string) => value;
+       export const Followed = ({ className }: { className?: string }) => {
+         const cls = toClass(className);
+         const alias = cls;
+         return <Base className={alias} />;
+       };`,
+    );
+    const flagged = tracer.traceStyleTargets(file, 'Flagged');
+    expect(flagged.status).toBe('unsupported');
+    expect(flagged.failures?.join(' ')).toContain("function 'consume'");
+    const destructured = tracer.traceStyleTargets(file, 'Destructured');
+    expect(destructured.status).toBe('unsupported');
+    expect(destructured.failures?.join(' ')).toContain("function 'consume'");
+    expect(trace(file, 'Followed')).toEqual([['Base:styled']]);
+  });
+
+  it('detects nested redeclarations of any kind and depth', () => {
+    const file = write(
+      'nested-shadow-kinds.tsx',
+      `import { styled } from '@linaria/react';
+       import { cx } from '@linaria/core';
+       const Base = styled.div\`\`;
+       const Other = styled.span\`\`;
+       export const DeepParam = ({ className, rows }: { className?: string; rows: string[][] }) => (
+         <Base className={className}>
+           {rows.map((row) => row.map((className) => <span key={className} />))}
+         </Base>
+       );
+       export const FunctionDecl = ({ className, items }: { className?: string; items: string[] }) => {
+         const rows = items.map((item) => {
+           function Base() {
+             return <Other />;
+           }
+           return <Base key={item} />;
+         });
+         return <Base className={className}>{rows}</Base>;
+       };
+       export const CatchParam = ({ className }: { className?: string }) => {
+         const run = () => {
+           try {
+             return null;
+           } catch (cx) {
+             return cx;
+           }
+         };
+         run();
+         return <Base className={cx(className, 'x')} />;
+       };
+       export const OuterLocal = ({ className, items }: { className?: string; items: string[] }) => {
+         const extra = 'outer';
+         const rows = items.map((extra) => <span key={extra} />);
+         return <Base className={cx(className, extra)}>{rows}</Base>;
+       };
+       export const OuterElement = ({ className, items }: { className?: string; items: string[] }) => {
+         const El = Base;
+         const rows = items.map((item) => {
+           const El = Other;
+           return <El key={item} />;
+         });
+         return <El className={className}>{rows}</El>;
+       };
+       export const IrrelevantLocal = ({ className, value, items }: { className?: string; value: string; items: string[] }) => {
+         const label = value.trim();
+         const onChange = (event: { target: { value: string } }) => {
+           const { value } = event.target;
+           const label = value;
+           return label;
+         };
+         return (
+           <Base className={className}>
+             <input value={label} onChange={onChange} />
+             {items.map((item) => <span key={item} />)}
+           </Base>
+         );
+       };`,
+    );
+    for (const name of [
+      'DeepParam',
+      'FunctionDecl',
+      'CatchParam',
+      'OuterLocal',
+      'OuterElement',
+    ]) {
+      const result = tracer.traceStyleTargets(file, name);
+      expect(result.status).toBe('unsupported');
+      expect(result.failures?.join(' ')).toContain(
+        'is redeclared inside a nested function',
+      );
+    }
+    // outer `value` / `label` are redeclared in a handler but feed no class
+    // or element expression of a target
+    expect(trace(file, 'IrrelevantLocal')).toEqual([['Base:styled']]);
+  });
+
+  it('rejects call results assigned after declaration that never reach a class position', () => {
+    const file = write(
+      'call-result-assign.tsx',
+      `import { styled } from '@linaria/react';
+       const Base = styled.div\`\`;
+       declare function consume(x?: string): boolean;
+       export const Assigned = ({ className }: { className?: string }) => {
+         let flag;
+         flag = consume(className);
+         if (flag) return null;
+         return <Base className={className} />;
+       };`,
+    );
+    const result = tracer.traceStyleTargets(file, 'Assigned');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain("function 'consume'");
+  });
+
   it('re-parses edited files (dev-watch invalidation)', () => {
     const file = write('watched.tsx', `export const marker1 = 1;`);
     const first = tracer.parseFile(file);

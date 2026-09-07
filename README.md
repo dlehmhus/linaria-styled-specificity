@@ -100,12 +100,16 @@ in [docs/styled-specificity.md](docs/styled-specificity.md).
 
 1. `processor/analyzer/class-name-tracer.cjs` parses the wrapped component
    (oxc-parser) and follows `className` to the JSX elements it lands on:
-   ternaries, `||` / `??` / `&&`, `cx()` / `clsx()` / `classNames()`, rest
-   props and carrier objects, locals, helper functions, module-level variant
-   maps, forwarding through other props into children, element aliases,
-   imports / re-exports / `memo()` / `forwardRef()`, component factories
-   (`const C = hoc(Inner)` with the factory's params bound to the call's
-   arguments).
+   ternaries, `||` / `??` / `&&`, `cx()` / `clsx()` / `classNames()`
+   (recognised by import source, aliases included), rest props and carrier
+   objects (last-write-wins across spreads), locals, destructuring defaults,
+   helper functions, module-level variant maps, forwarding through other props
+   into children, element aliases, imports / re-exports / `memo()` /
+   `forwardRef()` (aliased `styled` / `css` imports included), component
+   factories (`const C = hoc(Inner)` with the factory's params bound to the
+   call's arguments). Anything it cannot prove, including class values passed
+   to untraced calls whose result never reaches a class position, fails the
+   build with the reason.
 2. `processor/analyzer/static-class-names.cjs` resolves each target's Linaria
    chain (`styled(X)` extends, `css` classes) without evaluating anything.
 3. `processor/styled-processor.cjs` (a subclass of `@linaria/react`'s
