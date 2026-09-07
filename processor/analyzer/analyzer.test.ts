@@ -856,6 +856,32 @@ describe('class-name-tracer', () => {
     expect(result.failures?.join(' ')).toContain("function 'consume'");
   });
 
+  it('rejects nested redeclarations of a factory parameter', () => {
+    const file = write(
+      'factory-shadow.tsx',
+      `import { styled } from '@linaria/react';
+       const Leaf = styled.span\`\`;
+       const Other = styled.b\`\`;
+       export const Real = ({ className }: { className?: string }) => (
+         <Leaf className={className} />
+       );
+       type P = { className?: string; items: string[] };
+       const wrap = (Inner: React.ComponentType<P>) => (props: P) => (
+         <Inner {...props}>
+           {props.items.map((item) => {
+             const Inner = Other;
+             return <Inner key={item} />;
+           })}
+         </Inner>
+       );
+       export const Wrapped = wrap(Real);`,
+    );
+    // without the guard the outer <Inner> resolves to Other instead of Real
+    const result = tracer.traceStyleTargets(file, 'Wrapped');
+    expect(result.status).toBe('unsupported');
+    expect(result.failures?.join(' ')).toContain("'Inner' is redeclared");
+  });
+
   it('re-parses edited files (dev-watch invalidation)', () => {
     const file = write('watched.tsx', `export const marker1 = 1;`);
     const first = tracer.parseFile(file);

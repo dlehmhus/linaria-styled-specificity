@@ -1633,9 +1633,12 @@ const traceFunction = (fn, code, filename, inputs, siteProps, closure) => {
   });
 
   for (const name of nestedDeclared) {
+    // `closure` rather than scope.aliases: buildScope already dropped an
+    // alias that a (nested) local shadows, which is exactly the case here
     const shadowsTrace =
       scope.tracked.has(name) ||
       scope.carriers.has(name) ||
+      closure?.has(name) ||
       findModuleBinding(program, name);
     const shadowsRelevantLocal =
       outerDeclared.has(name) &&

@@ -230,8 +230,8 @@ is a leak unless its result reaches a class position: a bare statement, a
 condition (`if (consume(className))`) or a local that is only tested
 (`const flag = consume(className); if (flag)`) all fail. The scope model is
 flat across nested callbacks, so a callback that redeclares a name bound
-outside it (`className`, the props object, a local of the component, a module
-binding such as a component or `cx`) fails as well.
+outside it (`className`, the props object, a factory parameter, a local of the
+component, a module binding such as a component or `cx`) fails as well.
 Wrong-but-silent selectors are never emitted. Restructure the forwarding into
 one of the supported patterns above.
 
